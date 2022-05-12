@@ -4465,8 +4465,22 @@ void ndpi_free_flow_data(struct ndpi_flow_struct* flow) {
     }
 
     if(flow->l4_proto == IPPROTO_TCP) {
-      if(flow->l4.tcp.tls.message.buffer)
-	ndpi_free(flow->l4.tcp.tls.message.buffer);
+      if(flow->l4.tcp.tls.message.buffer) {
+        // CFAI patch here, check buffer_len in addition to pointer itself
+        if( flow->l4.tcp.tls.message.buffer_len == 0 ) {
+          fprintf(stderr,"[nDPI:CFAI] Skip freeing of (%d bytes, %u used) message buffer at %p.\n",
+                  flow->l4.tcp.tls.message.buffer_len,
+                  flow->l4.tcp.tls.message.buffer_used,
+                  flow->l4.tcp.tls.message.buffer);
+          fflush(stderr);
+        } else {
+          ndpi_free(flow->l4.tcp.tls.message.buffer);
+          // Reset buffer length vars after free.
+          flow->l4.tcp.tls.message.buffer = NULL;
+          flow->l4.tcp.tls.message.buffer_len = flow->l4.tcp.tls.message.buffer_used = 0;
+        }
+      }
+
     }
 
     if(flow->l4_proto == IPPROTO_UDP) {
