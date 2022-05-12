@@ -140,6 +140,16 @@ static u_int16_t get16(int *i, const u_int8_t *payload) {
 
 /* *********************************************** */
 
+static u_int32_t get32(int *i, const u_int8_t *payload) {
+  u_int32_t v = *(u_int32_t*)&payload[*i];
+
+  (*i) += 4;
+
+  return(ntohl(v));
+}
+
+/* *********************************************** */
+
 static u_int getNameLength(u_int i, const u_int8_t *payload, u_int payloadLen) {
   if(i >= payloadLen)
     return(0);
@@ -277,6 +287,7 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
 
 	  rsp_type = get16(&x, packet->payload);
 
+
 #ifdef DNS_DEBUG
 	  printf("[DNS] [response] response_type=%d\n", rsp_type);
 #endif
@@ -287,7 +298,9 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
 
 	  /* here x points to the response "class" field */
 	  if((x+12) <= packet->payload_packet_len) {
-	    x += 6;
+      x += 2;
+      uint32_t ttl = get32(&x,packet->payload);
+      flow->protos.dns.answer_ttl = ttl;
 	    data_len = get16(&x, packet->payload);
 
 	    if((x + data_len) <= packet->payload_packet_len) {
