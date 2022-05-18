@@ -301,7 +301,7 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
       x += 2;
       uint32_t ttl = get32(&x,packet->payload);
       flow->protos.dns.answer_ttl = ttl;
-	    data_len = get16(&x, packet->payload);
+      data_len = get16(&x, packet->payload);
 
 	    if((x + data_len) <= packet->payload_packet_len) {
 	      // printf("[rsp_type: %u][data_len: %u]\n", rsp_type, data_len);
