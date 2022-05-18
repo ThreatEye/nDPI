@@ -287,7 +287,6 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
 
 	  rsp_type = get16(&x, packet->payload);
 
-
 #ifdef DNS_DEBUG
 	  printf("[DNS] [response] response_type=%d\n", rsp_type);
 #endif
