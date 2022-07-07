@@ -320,6 +320,8 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
             // reverse dns lookup responses can have an address section and a domain name section 
             // since we already have the address from the query we just need the domain name
             int section_len = packet->payload[x]; // get 1st segment len
+            // if first char is number this is an address 
+            // number can't be first char in domain name
             if (packet->payload[x+1] >= 0x30 && packet->payload[x+1] <= 0x39)
             {
               x += section_len +1; // skip  segment len + address field 
@@ -332,6 +334,7 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
               data_len--;
             } 
 
+            // copy domain name to field
             if (data_len > 32)
               memcpy(&flow->protos.dns.answer_domain, packet->payload + x, 32);
             else
