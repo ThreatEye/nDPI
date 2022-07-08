@@ -335,7 +335,7 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
             } 
 
             // copy domain name to field
-            if (data_len >= 32)
+            if (data_len >= sizeof(flow->protos.dns.answer_domain))
               memcpy(&flow->protos.dns.answer_domain, packet->payload + x, sizeof(flow->protos.dns.answer_domain)-1); // make sure buf is null terminated
             else
               memcpy(&flow->protos.dns.answer_domain, packet->payload + x, data_len);
