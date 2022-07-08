@@ -324,7 +324,7 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
             // number can't be first char in domain name
             if (packet->payload[x+1] >= 0x30 && packet->payload[x+1] <= 0x39)
             {
-              x += section_len +1; // skip  segment len + address field 
+              x += section_len + 1; // skip  segment len + address field 
               data_len -= section_len + 1; // adjust data_len for copying
             }
             // if block to remove the next segment length from the front of the string
@@ -335,8 +335,8 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
             } 
 
             // copy domain name to field
-            if (data_len > 32)
-              memcpy(&flow->protos.dns.answer_domain, packet->payload + x, 32);
+            if (data_len >= 32)
+              memcpy(&flow->protos.dns.answer_domain, packet->payload + x, sizeof(flow->protos.dns.answer_domain)-1); // make sure buf is null terminated
             else
               memcpy(&flow->protos.dns.answer_domain, packet->payload + x, data_len);
           }
