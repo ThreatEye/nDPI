@@ -317,28 +317,33 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
 	      }
           else if (rsp_type == 0x0c)
           {
-            // reverse dns lookup responses can have an address section and a domain name section 
-            // since we already have the address from the query we just need the domain name
-            int section_len = packet->payload[x]; // get 1st segment len
-            // if first char is number this is an address 
-            // number can't be first char in domain name
-            if (packet->payload[x+1] >= 0x30 && packet->payload[x+1] <= 0x39)
-            {
-              x += section_len + 1; // skip  segment len + address field 
-              data_len -= section_len + 1; // adjust data_len for copying
-            }
-            // if block to remove the next segment length from the front of the string
-            if (data_len > 0)
-            {
-              x++;
-              data_len--;
-            } 
 
-            // copy domain name to field
-            if (data_len >= sizeof(flow->protos.dns.answer_domain))
-              memcpy(&flow->protos.dns.answer_domain, packet->payload + x, sizeof(flow->protos.dns.answer_domain)-1); // make sure buf is null terminated
-            else
-              memcpy(&flow->protos.dns.answer_domain, packet->payload + x, data_len);
+            // reverse dns lookup responses can have an address label as well as additional domain name labels 
+            // since we already have the address from the query we just need the domain name
+            int an_index = 0;
+            while((packet->payload[x] != '.') && (packet->payload[x] != '\0'))
+            {
+              int label_len = packet->payload[x]; // get 1st label len
+            
+              // if first char is number this is an address 
+              // number can't be first char in domain name
+              if (packet->payload[x+1] >= 0x30 && packet->payload[x+1] <= 0x39)
+              {
+                x += label_len + 1; // skip  label len + address field 
+              }
+              else
+              {
+                if (an_index + label_len < (int)(sizeof(flow->protos.dns.answer_domain)-1))
+                {
+                  strncat(flow->protos.dns.answer_domain, (char *)packet->payload + x + 1, label_len); // copy label section into string field
+                  an_index += label_len; // increment index
+                  flow->protos.dns.answer_domain[an_index] = '.'; // delimeter between label sections
+                  an_index++; // increment index for delimeter
+                  x += label_len + 1; // skip  label len + address field 
+                }
+              }
+            }
+            flow->protos.dns.answer_domain[an_index - 1] = '\0'; // remove trailing '.' char and replace with null term
           }
 	    }
 	  }
