@@ -323,7 +323,7 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
             // we only process the first answer and grab its domain name
             int an_index = 0;
             // make sure to exit loop if x is a 00 octet or x exceeds the packet payload length or the length octet has first 2 bits set (domain name compressed)
-            while((packet->payload[x] != '\0') && (x < packet->payload_packet_len) && ((packet->payload[x] & 0xC0) != 0))
+            while((packet->payload[x] != '\0') && (x < packet->payload_packet_len) && (packet->payload[x] < 0x40)) // normal length octets can't be greater than 63 chars total 64 chars 1 for the length octet itself leaves 63
             {
               int label_len = packet->payload[x]; // get 1st label len
 
