@@ -54,7 +54,14 @@ static int ndpi_check_skype_udp_again(struct ndpi_detection_module_struct *ndpi_
     }
 
     if (detected) {
+      ndpi_protocol proto;
+
       ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_SKYPE_TEAMS, NDPI_PROTOCOL_UNKNOWN, NDPI_CONFIDENCE_DPI);
+      /* In "extra_eval" data path, if we change the classification, we need to update the category, too */
+      proto.master_protocol = NDPI_PROTOCOL_UNKNOWN;
+      proto.app_protocol = NDPI_PROTOCOL_SKYPE_TEAMS;
+      proto.category = NDPI_PROTOCOL_CATEGORY_UNSPECIFIED;
+      ndpi_fill_protocol_category(ndpi_struct, flow, &proto);
       flow->extra_packets_func = NULL;
 
       /* Stop checking extra packets */
@@ -72,7 +79,10 @@ static void ndpi_check_skype(struct ndpi_detection_module_struct *ndpi_struct, s
   u_int32_t payload_len = packet->payload_packet_len;
 
   /* No need to do ntohl() with 0xFFFFFFFF */
-  if(packet->iph && (packet->iph->daddr == 0xFFFFFFFF /* 255.255.255.255 */)) {
+  if(packet->iph
+     && ((packet->iph->daddr == 0xFFFFFFFF /* 255.255.255.255 */)
+	 || ((ntohl(packet->iph->daddr) & 0xFFFFFF00) == 0xE0000000 /* multicast */)
+	 )) {
     NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
     return;
   }
@@ -109,7 +119,7 @@ static void ndpi_check_skype(struct ndpi_detection_module_struct *ndpi_struct, s
 	  if(is_port(sport, dport, 8801)) {
 	    ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_ZOOM, NDPI_PROTOCOL_UNKNOWN, NDPI_CONFIDENCE_DPI);
 	  } else if (payload_len >= 16 && packet->payload[0] != 0x01) /* Avoid invalid Cisco HSRP detection / RADIUS */ {
-	    ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_SKYPE_CALL, NDPI_PROTOCOL_SKYPE_TEAMS, NDPI_CONFIDENCE_DPI);
+	    ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_SKYPE_TEAMS_CALL, NDPI_PROTOCOL_SKYPE_TEAMS, NDPI_CONFIDENCE_DPI);
 	  }
 	}
 
@@ -186,7 +196,7 @@ void ndpi_search_skype(struct ndpi_detection_module_struct *ndpi_struct, struct 
 
 void init_skype_dissector(struct ndpi_detection_module_struct *ndpi_struct, u_int32_t *id, NDPI_PROTOCOL_BITMASK *detection_bitmask)
 {
-  ndpi_set_bitmask_protocol_detection("Skype", ndpi_struct, detection_bitmask, *id,
+  ndpi_set_bitmask_protocol_detection("Skype_Teams", ndpi_struct, detection_bitmask, *id,
 				      NDPI_PROTOCOL_SKYPE_TEAMS,
 				      ndpi_search_skype,
 				      NDPI_SELECTION_BITMASK_PROTOCOL_V4_V6_TCP_OR_UDP_WITH_PAYLOAD,

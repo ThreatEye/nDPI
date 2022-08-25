@@ -99,6 +99,15 @@ extern "C" {
 			      u_int match_len, u_int32_t *num);
 
   /**
+   * Return the protocol error code of a given flow
+   *
+   * @par    flow    = the flow to analyze
+   * @return the error code or 0 otherwise
+   *                        
+   */
+  u_int32_t ndpi_get_flow_error_code(struct ndpi_flow_struct *flow);
+  
+  /**
    * nDPI personal allocation and free functions
    **/
   void * ndpi_malloc(size_t size);
@@ -109,7 +118,7 @@ extern "C" {
   void * ndpi_flow_malloc(size_t size);
   void   ndpi_flow_free(void *ptr);
   u_int32_t ndpi_get_tot_allocated_memory(void);
-  
+
   /**
    * Search the first occurrence of substring -find- in -s-
    * The search is limited to the first -slen- characters of the string
@@ -330,6 +339,40 @@ extern "C" {
    */
   u_int16_t ndpi_get_flow_masterprotocol(struct ndpi_detection_module_struct *ndpi_struct,
 					 struct ndpi_flow_struct *flow);
+
+  /**
+   * Get the app protocol of the passed flows for the detected module
+   *
+   *
+   * @par    ndpi_struct  = the detection module
+   * @par    flow         = the flow given for the detection module
+   * @return the ID of the app protocol detected
+   *
+   */
+  u_int16_t ndpi_get_flow_appprotocol(struct ndpi_detection_module_struct *ndpi_str, struct ndpi_flow_struct *flow);
+
+  /**
+   * Get the category of the passed flows for the detected module
+   *
+   *
+   * @par    ndpi_struct  = the detection module
+   * @par    flow         = the flow given for the detection module
+   * @return the ID of the category
+   *
+   */
+  ndpi_protocol_category_t ndpi_get_flow_category(struct ndpi_detection_module_struct *ndpi_str, struct ndpi_flow_struct *flow);
+
+  /**
+   * Get the ndpi protocol data of the passed flows for the detected module
+   *
+   *
+   * @par    ndpi_struct  = the detection module
+   * @par    flow         = the flow given for the detection module
+   * @par    ndpi_proto   = the output struct where to store the requested information
+   *
+   */
+  void ndpi_get_flow_ndpi_proto(struct ndpi_detection_module_struct *ndpi_str, struct ndpi_flow_struct *flow,
+                    struct ndpi_proto * ndpi_proto);
 
   /**
    * API call that is called internally by ndpi_detection_process_packet or by apps
@@ -722,10 +765,11 @@ extern "C" {
    *
    * @par     ndpi_mod = the detection module
    * @par     path     = the path of the file
+   * @par     user_data = pointer to some user data value
    * @return  0 if the file is loaded correctly;
    *          -1 else
    */
-  int ndpi_load_categories_file(struct ndpi_detection_module_struct *ndpi_str, const char* path);
+  int ndpi_load_categories_file(struct ndpi_detection_module_struct *ndpi_str, const char* path, void *user_data);
 
   /**
    * Read a file and load the list of risky domains
@@ -888,12 +932,16 @@ extern "C" {
   int ndpi_match_string(void *_automa, char *string_to_match);
 
   int ndpi_load_ip_category(struct ndpi_detection_module_struct *ndpi_struct,
-			    const char *ip_address_and_mask, ndpi_protocol_category_t category);
+			    const char *ip_address_and_mask, ndpi_protocol_category_t category,
+			    void *user_data);
   int ndpi_load_hostname_category(struct ndpi_detection_module_struct *ndpi_struct,
 				  const char *name_to_add, ndpi_protocol_category_t category);
   int ndpi_load_category(struct ndpi_detection_module_struct *ndpi_struct,
-			 const char *ip_or_name, ndpi_protocol_category_t category);
+			 const char *ip_or_name, ndpi_protocol_category_t category,
+			 void *user_data);
   int ndpi_enable_loaded_categories(struct ndpi_detection_module_struct *ndpi_struct);
+  void* ndpi_find_ipv4_category_userdata(struct ndpi_detection_module_struct *ndpi_str,
+					 u_int32_t saddr);
   int ndpi_fill_ip_protocol_category(struct ndpi_detection_module_struct *ndpi_struct,
 				     u_int32_t saddr,
 				     u_int32_t daddr,
@@ -952,12 +1000,12 @@ extern "C" {
    *
    * @par    ndpi_struct  = the struct created for the protocol detection
    * @par    days         = the number of days threshold for emitting the alert
-   *                        
+   *
    */
   void ndpi_set_tls_cert_expire_days(struct ndpi_detection_module_struct *ndpi_str,
 				     u_int8_t days);
 
-  
+
   /* Utility functions to set ndpi malloc/free/print wrappers */
   void set_ndpi_malloc(void* (*__ndpi_malloc)(size_t size));
   void set_ndpi_free(void  (*__ndpi_free)(void *ptr));
@@ -1056,7 +1104,7 @@ extern "C" {
   u_int64_t ndpi_ntohll(u_int64_t v);
   u_int8_t ndpi_is_valid_protoId(u_int16_t protoId);
   u_int8_t ndpi_is_encrypted_proto(struct ndpi_detection_module_struct *ndpi_str, ndpi_protocol proto);
-  
+
   /* DGA */
   int ndpi_check_dga_name(struct ndpi_detection_module_struct *ndpi_str,
 			  struct ndpi_flow_struct *flow,
@@ -1155,7 +1203,7 @@ extern "C" {
   int ndpi_serialize_uint32_string(ndpi_serializer *serializer, u_int32_t key, const char *value);
 
   /**
-   * Serialize a 32-bit unsigned int key and a boolean value
+   * Serialize a 32-bit unsigned int key and a boolean value (JSON/CSV only, not supported by TLV)
    * @param serializer The serializer handle
    * @param key The field name or ID
    * @param value The field value
@@ -1268,6 +1316,17 @@ extern "C" {
    * @return 0 on success, a negative number otherwise
    */
   int ndpi_serialize_string_string(ndpi_serializer *serializer, const char *key, const char *value);
+
+  /**
+   * Serialize a string key and a string value
+   * @param serializer The serializer handle
+   * @param key The field name or ID
+   * @param value The field value
+   * @param value_len The field value length
+   * @return 0 on success, a negative number otherwise
+   */
+  int ndpi_serialize_string_string_len(ndpi_serializer *serializer, const char *key,
+				       const char *value, u_int16_t value_len);
 
   /**
    * Serialize a string key and an unterminated string value
@@ -1391,6 +1450,14 @@ extern "C" {
   int ndpi_serialize_start_of_block(ndpi_serializer *serializer, const char *key);
 
   /**
+   * Serialize the start of a block with a numeric key
+   * @param serializer The serializer handle
+   * @param key The numeric key as 32-bit unsigned integer.
+   * @return 0 on success, a negative number otherwise
+   */
+  int ndpi_serialize_start_of_block_uint32(ndpi_serializer *serializer, u_int32_t key);
+
+  /**
    * Serialize the end of a block
    * @param serializer The serializer handle
    * @param key The field name or ID
@@ -1488,6 +1555,13 @@ extern "C" {
   int ndpi_deserialize_clone_item(ndpi_deserializer *deserializer, ndpi_serializer *serializer);
   int ndpi_deserialize_clone_all(ndpi_deserializer *deserializer, ndpi_serializer *serializer);
 
+  /*
+   * Escape a string to be suitable for a JSON value, adding double quotes, and terminating the string with a null byte.
+   * It is recommended to provide a destination buffer (dst) which is as large as double the source buffer (src) at least.
+   * Upon successful return, these functions return the number of characters printed (excluding the null byte used to terminate the string).
+   */
+  int ndpi_json_string_escape(const char *src, int src_len, char *dst, int dst_max_len);
+
   /* Data analysis */
   struct ndpi_analyze_struct* ndpi_alloc_data_analysis(u_int16_t _max_series_len);
   void ndpi_init_data_analysis(struct ndpi_analyze_struct *s, u_int16_t _max_series_len);
@@ -1505,6 +1579,7 @@ extern "C" {
   float ndpi_data_entropy(struct ndpi_analyze_struct *s);
   float ndpi_data_variance(struct ndpi_analyze_struct *s);
   float ndpi_data_stddev(struct ndpi_analyze_struct *s);
+  float ndpi_data_mean(struct ndpi_analyze_struct *s);
   u_int32_t ndpi_data_last(struct ndpi_analyze_struct *s);
   u_int32_t ndpi_data_min(struct ndpi_analyze_struct *s);
   u_int32_t ndpi_data_max(struct ndpi_analyze_struct *s);
@@ -1528,13 +1603,13 @@ extern "C" {
   int ndpi_ses_init(struct ndpi_ses_struct *ses, double alpha, float significance);
   int ndpi_ses_add_value(struct ndpi_ses_struct *ses, const u_int64_t _value, double *forecast, double *confidence_band);
   void ndpi_ses_fitting(double *values, u_int32_t num_values, float *ret_alpha);
-  
+
   /* ******************************* */
 
   int ndpi_des_init(struct ndpi_des_struct *des, double alpha, double beta, float significance);
   int ndpi_des_add_value(struct ndpi_des_struct *des, const u_int64_t _value, double *forecast, double *confidence_band);
   void ndpi_des_fitting(double *values, u_int32_t num_values, float *ret_alpha, float *ret_beta);
-  
+
   /* ******************************* */
 
   int   ndpi_jitter_init(struct ndpi_jitter_struct *hw, u_int16_t num_periods);
@@ -1551,9 +1626,13 @@ extern "C" {
 
   u_int8_t ndpi_is_protocol_detected(struct ndpi_detection_module_struct *ndpi_str,
 				     ndpi_protocol proto);
-  void ndpi_serialize_risk(ndpi_serializer *serializer, ndpi_risk_enum risk);
+  void ndpi_serialize_risk(ndpi_serializer *serializer, ndpi_risk risk);
+  void ndpi_serialize_risk_score(ndpi_serializer *serializer, ndpi_risk_enum risk);
+  void ndpi_serialize_confidence(ndpi_serializer *serializer, ndpi_confidence_t confidence);
   void ndpi_serialize_proto(struct ndpi_detection_module_struct *ndpi_struct,
-                            ndpi_serializer *serializer, ndpi_risk_enum risk,
+                            ndpi_serializer *serializer,
+                            ndpi_risk_enum risk,
+                            ndpi_confidence_t confidence,
                             ndpi_protocol l7_protocol);
   const char* ndpi_risk2str(ndpi_risk_enum risk);
   const char* ndpi_severity2str(ndpi_risk_severity s);
@@ -1561,6 +1640,12 @@ extern "C" {
   u_int16_t ndpi_risk2score(ndpi_risk risk,
 			    u_int16_t *client_score, u_int16_t *server_score);
 
+  u_int8_t ndpi_check_issuerdn_risk_exception(struct ndpi_detection_module_struct *ndpi_str,
+					      char *issuerDN);    
+  u_int8_t ndpi_check_flow_risk_exceptions(struct ndpi_detection_module_struct *ndpi_str,
+					   u_int num_params,
+					   ndpi_risk_params params[]);
+  
   /* ******************************* */
 
   /* HyperLogLog cardinality estimator */
@@ -1582,9 +1667,9 @@ extern "C" {
   int  ndpi_init_bin(struct ndpi_bin *b, enum ndpi_bin_family f, u_int16_t num_bins);
   void ndpi_free_bin(struct ndpi_bin *b);
   struct ndpi_bin* ndpi_clone_bin(struct ndpi_bin *b);
-  void ndpi_inc_bin(struct ndpi_bin *b, u_int16_t slot_id, u_int32_t val);
-  void ndpi_set_bin(struct ndpi_bin *b, u_int16_t slot_id, u_int32_t value);
-  u_int32_t ndpi_get_bin_value(struct ndpi_bin *b, u_int16_t slot_id);
+  void ndpi_inc_bin(struct ndpi_bin *b, u_int16_t slot_id, u_int64_t val);
+  void ndpi_set_bin(struct ndpi_bin *b, u_int16_t slot_id, u_int64_t value);
+  u_int64_t ndpi_get_bin_value(struct ndpi_bin *b, u_int16_t slot_id);
   void ndpi_reset_bin(struct ndpi_bin *b);
   void ndpi_normalize_bin(struct ndpi_bin *b);
   char* ndpi_print_bin(struct ndpi_bin *b, u_int8_t normalize_first, char *out_buf, u_int out_buf_len);
@@ -1596,14 +1681,70 @@ extern "C" {
 
   /* ******************************* */
 
+  /*
+   * Finds outliers using Z-score
+   * Z-Score = (Value - Mean) / StdDev
+   *
+   * @par    values      = pointer to the individual values to be analyzed [in]
+   * @par    outliers    = pointer to a list of outliers identified        [out]
+   * @par    num_values  = lenght of values and outliers that MUST have the same lenght [in]
+   *
+   * @return The number of outliers found
+  */
+  u_int ndpi_find_outliers(u_int32_t *values, bool *outliers, u_int32_t num_values);
+
+  /* ******************************* */
+
   u_int32_t ndpi_quick_16_byte_hash(u_int8_t *in_16_bytes_long);
 
   /* ******************************* */
 
-  ndpi_str_hash* ndpi_hash_alloc(u_int32_t max_num_entries);
-  void ndpi_hash_free(ndpi_str_hash *h);
-  int ndpi_hash_find_entry(ndpi_str_hash *h, char *key, u_int key_len, u_int8_t *value);
-  int ndpi_hash_add_entry(ndpi_str_hash *h, char *key, u_int8_t key_len, u_int8_t value);
+  /**
+   * Initialize the hashmap.
+   *
+   * @par    h            = pointer to the hash map [in, out]
+   *
+   * @return 0 on success, 1 otherwise
+   *
+   */
+  int ndpi_hash_init(ndpi_str_hash **h);
+
+  /**
+   * Free the hashmap.
+   *
+   * @par    h            = pointer to the hash map [in, out]
+   * @par    cleanup_func = pointer to a optional callback function
+   *                        called for each element in the hashmap [in]
+   *
+   */
+  void ndpi_hash_free(ndpi_str_hash **h, void (*cleanup_func)(ndpi_str_hash *h));
+
+  /**
+   * Search for an entry in the hashmap.
+   *
+   * @par    h            = pointer to the hash map [in]
+   * @par    key          = character string (no '\0' required) [in]
+   * @par    key_len      = length of the character string @key [in]
+   * @par    value        = pointer to a pointer to the value, which contains a
+   *                        previously added hash entry [in, out]
+   *
+   * @return 0 if an entry with that key was found, 1 otherwise
+   *
+   */
+  int ndpi_hash_find_entry(ndpi_str_hash *h, char *key, u_int key_len, void **value);
+
+  /**
+   * Add an entry to the hashmap.
+   *
+   * @par    h            = pointer to the hash map [in, out]
+   * @par    key          = character string (no '\0' required) [in]
+   * @par    key_len      = length of the character string @key [in]
+   * @par    value        = pointer to the value to add [in]
+   *
+   * @return 0 if the entry was added, 1 otherwise
+   *
+   */
+  int ndpi_hash_add_entry(ndpi_str_hash **h, char *key, u_int8_t key_len, void *value);
 
   /* ******************************* */
 
@@ -1619,7 +1760,7 @@ extern "C" {
   /* ******************************* */
 
   char* ndpi_get_flow_name(struct ndpi_flow_struct *flow);
-  
+
   /* ******************************* */
 
   ndpi_bitmap* ndpi_bitmap_alloc(void);
@@ -1635,13 +1776,17 @@ extern "C" {
 
   void ndpi_bitmap_and(ndpi_bitmap* a, ndpi_bitmap* b_and);
   void ndpi_bitmap_or(ndpi_bitmap* a, ndpi_bitmap* b_or);
-  
+
   ndpi_bitmap_iterator* ndpi_bitmap_iterator_alloc(ndpi_bitmap* b);
   void ndpi_bitmap_iterator_free(ndpi_bitmap* b);
   bool ndpi_bitmap_iterator_next(ndpi_bitmap_iterator* i, uint32_t *value);
 
   /* ******************************* */
-  
+
+  char* ndpi_get_flow_risk_info(struct ndpi_flow_struct *flow,
+				char *out, u_int out_len,
+				u_int8_t use_json);
+
 #ifdef __cplusplus
 }
 #endif

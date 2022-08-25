@@ -21,9 +21,8 @@
  *
  */
 
-#ifdef HAVE_CONFIG_H
 #include "ndpi_config.h"
-#endif
+#include "ndpi_api.h"
 
 #include <stdlib.h>
 #include <math.h>
@@ -31,9 +30,13 @@
 
 #ifdef WIN32
 #include <winsock2.h> /* winsock.h is included automatically */
+#include <windows.h>
+#include <ws2tcpip.h>
 #include <process.h>
 #include <io.h>
+#ifndef DISABLE_NPCAP
 #include <ip6_misc.h>
+#endif
 #else
 #include <unistd.h>
 #include <netinet/in.h>
@@ -391,7 +394,8 @@ extern char *_debug_protocols;
 static int _debug_protocols_ok = 0;
 
 struct ndpi_workflow* ndpi_workflow_init(const struct ndpi_workflow_prefs * prefs,
-					 pcap_t * pcap_handle) {
+					 pcap_t * pcap_handle, int do_init_flows_root,
+					 ndpi_serialization_format serialization_format) {
   struct ndpi_detection_module_struct * module;
   struct ndpi_workflow * workflow;
 
@@ -427,7 +431,16 @@ struct ndpi_workflow* ndpi_workflow_init(const struct ndpi_workflow_prefs * pref
   if(_debug_protocols_ok)
     ndpi_set_debug_bitmask(module, debug_bitmask);
 
-  workflow->ndpi_flows_root = ndpi_calloc(workflow->prefs.num_roots, sizeof(void *));
+  if(do_init_flows_root)
+    workflow->ndpi_flows_root = ndpi_calloc(workflow->prefs.num_roots, sizeof(void *));
+
+  if (serialization_format != ndpi_serialization_format_unknown &&
+      ndpi_init_serializer(&workflow->ndpi_serializer,
+                           serialization_format) != 0)
+  {
+    LOG(NDPI_LOG_ERROR, "serializer initialization failed\n");
+    exit(-1);
+  }
 
   return workflow;
 }
@@ -528,6 +541,8 @@ void ndpi_flow_info_free_data(struct ndpi_flow_info *flow) {
 #else
   ndpi_free_bin(&flow->payload_len_bin);
 #endif
+
+  if(flow->risk_str) ndpi_free(flow->risk_str);
 }
 
 /* ***************************************************** */
@@ -535,12 +550,21 @@ void ndpi_flow_info_free_data(struct ndpi_flow_info *flow) {
 void ndpi_workflow_free(struct ndpi_workflow * workflow) {
   u_int i;
 
+  ndpi_term_serializer(&workflow->ndpi_serializer);
+
   for(i=0; i<workflow->prefs.num_roots; i++)
     ndpi_tdestroy(workflow->ndpi_flows_root[i], ndpi_flow_info_freer);
 
   ndpi_exit_detection_module(workflow->ndpi_struct);
   ndpi_free(workflow->ndpi_flows_root);
   ndpi_free(workflow);
+}
+
+static inline int cmp_n32(uint32_t a,uint32_t b) {
+	return a == b ? 0 : ntohl(a) < ntohl(b) ? -1:1;
+}
+static inline int cmp_n16(uint16_t a,uint16_t b) {
+	return a == b ? 0 : ntohs(a) < ntohs(b) ? -1:1;
 }
 
 /* ***************************************************** */
@@ -556,29 +580,13 @@ int ndpi_workflow_node_cmp(const void *a, const void *b) {
   if(fa->vlan_id   < fb->vlan_id   ) return(-1); else { if(fa->vlan_id    > fb->vlan_id   ) return(1); }
   if(fa->protocol  < fb->protocol  ) return(-1); else { if(fa->protocol   > fb->protocol  ) return(1); }
 
-  if(
-     (
-      (fa->src_ip      == fb->src_ip  )
-      && (fa->src_port == fb->src_port)
-      && (fa->dst_ip   == fb->dst_ip  )
-      && (fa->dst_port == fb->dst_port)
-      )
-     ||
-     (
-      (fa->src_ip      == fb->dst_ip  )
-      && (fa->src_port == fb->dst_port)
-      && (fa->dst_ip   == fb->src_ip  )
-      && (fa->dst_port == fb->src_port)
-      )
-     )
-    return(0);
+  int r;
+  r = cmp_n32(fa->src_ip, fb->src_ip); if(r) return r;
+  r = cmp_n16(fa->src_port, fb->src_port) ; if(r) return r;
+  r = cmp_n32(fa->dst_ip, fb->dst_ip); if(r) return r;
+  r = cmp_n16(fa->dst_port, fb->dst_port);
 
-  if(fa->src_ip   < fb->src_ip  ) return(-1); else { if(fa->src_ip   > fb->src_ip  ) return(1); }
-  if(fa->src_port < fb->src_port) return(-1); else { if(fa->src_port > fb->src_port) return(1); }
-  if(fa->dst_ip   < fb->dst_ip  ) return(-1); else { if(fa->dst_ip   > fb->dst_ip  ) return(1); }
-  if(fa->dst_port < fb->dst_port) return(-1); else { if(fa->dst_port > fb->dst_port) return(1); }
-
-  return(0); /* notreached */
+  return(r);
 }
 
 /* ***************************************************** */
@@ -788,11 +796,17 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
   flow.protocol = iph->protocol, flow.vlan_id = vlan_id;
   flow.src_ip = iph->saddr, flow.dst_ip = iph->daddr;
   flow.src_port = htons(*sport), flow.dst_port = htons(*dport);
-  flow.hashval = hashval = flow.protocol + flow.src_ip + flow.dst_ip + flow.src_port + flow.dst_port;
+  flow.hashval = hashval = flow.protocol + ntohl(flow.src_ip) + ntohl(flow.dst_ip) 
+	  + ntohs(flow.src_port) + ntohs(flow.dst_port);
 
 #if 0
-  printf("hashval=%u [%u][%u][%u:%u][%u:%u]\n", hashval, flow.protocol, flow.vlan_id,
-	 flow.src_ip, flow.src_port, ntohs(flow.dst_ip), ntohs(flow.dst_port));
+  {
+  char ip1[48],ip2[48];
+       inet_ntop(AF_INET, &flow.src_ip, ip1, sizeof(ip1));
+       inet_ntop(AF_INET, &flow.dst_ip, ip2, sizeof(ip2));
+  printf("hashval=%u [%u][%u][%s:%u][%s:%u]\n", hashval, flow.protocol, flow.vlan_id,
+        ip1, ntohs(flow.src_port),  ip2, ntohs(flow.dst_port));
+  }
 #endif
 
   idx = hashval % workflow->prefs.num_roots;
@@ -856,10 +870,14 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
 	inet_ntop(AF_INET, &newflow->src_ip, newflow->src_name, sizeof(newflow->src_name));
 	inet_ntop(AF_INET, &newflow->dst_ip, newflow->dst_name, sizeof(newflow->dst_name));
       } else {
-	inet_ntop(AF_INET6, &iph6->ip6_src, newflow->src_name, sizeof(newflow->src_name));
-	inet_ntop(AF_INET6, &iph6->ip6_dst, newflow->dst_name, sizeof(newflow->dst_name));
-	/* For consistency across platforms replace :0: with :: */
-	ndpi_patchIPv6Address(newflow->src_name), ndpi_patchIPv6Address(newflow->dst_name);
+        newflow->src_ip6 = *(struct ndpi_in6_addr *)&iph6->ip6_src;
+        inet_ntop(AF_INET6, &newflow->src_ip6,
+                  newflow->src_name, sizeof(newflow->src_name));
+        newflow->dst_ip6 = *(struct ndpi_in6_addr *)&iph6->ip6_dst;
+        inet_ntop(AF_INET6, &newflow->dst_ip6,
+                  newflow->dst_name, sizeof(newflow->dst_name));
+        /* For consistency across platforms replace :0: with :: */
+        ndpi_patchIPv6Address(newflow->src_name), ndpi_patchIPv6Address(newflow->dst_name);
       }
 
       if((newflow->ndpi_flow = ndpi_flow_malloc(SIZEOF_FLOW_STRUCT)) == NULL) {
@@ -904,24 +922,10 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
     struct ndpi_flow_info *rflow = *(struct ndpi_flow_info**)ret;
 
     if(is_changed) {
-      if(rflow->src_ip == iph->saddr
-	 && rflow->dst_ip == iph->daddr
-	 && rflow->src_port == htons(*sport)
-	 && rflow->dst_port == htons(*dport)
-	 )
-	*src_to_dst_direction = 0, rflow->bidirectional = 1;
-      else
-	*src_to_dst_direction = 1;
+	*src_to_dst_direction = 0, rflow->bidirectional |= 1;
     }
     else {
-      if(rflow->src_ip == iph->saddr
-	 && rflow->dst_ip == iph->daddr
-	 && rflow->src_port == htons(*sport)
-	 && rflow->dst_port == htons(*dport)
-	 )
 	*src_to_dst_direction = 1;
-      else
-	*src_to_dst_direction = 0, rflow->bidirectional = 1;
     }
     if(enable_flow_stats) {
       if(src_to_dst_direction) {
@@ -983,6 +987,8 @@ static struct ndpi_flow_info *get_ndpi_flow_info6(struct ndpi_workflow * workflo
   u_int8_t l4proto = iph6->ip6_hdr.ip6_un1_nxt;
   u_int16_t ip_len = ntohs(iph6->ip6_hdr.ip6_un1_plen);
   const u_int8_t *l4ptr = (((const u_int8_t *) iph6) + sizeof(struct ndpi_ipv6hdr));
+  if(ipsize < sizeof(struct ndpi_ipv6hdr) + ip_len)
+    return(NULL);
   if(ndpi_handle_ipv6_extension_headers(ipsize - sizeof(struct ndpi_ipv6hdr), &l4ptr, &ip_len, &l4proto) != 0) {
     return(NULL);
   }
@@ -1030,17 +1036,25 @@ u_int8_t plen2slot(u_int16_t plen) {
 
 /* ****************************************************** */
 
-void process_ndpi_collected_info(struct ndpi_workflow * workflow, struct ndpi_flow_info *flow, FILE * csv_fp) {
+void process_ndpi_collected_info(struct ndpi_workflow * workflow, struct ndpi_flow_info *flow) {
   u_int i, is_quic = 0;
-
+  char out[128], *s;
+  
   if(!flow->ndpi_flow) return;
 
+  flow->info_type = INFO_INVALID;
+
+  s = ndpi_get_flow_risk_info(flow->ndpi_flow, out, sizeof(out), 0 /* text */);
+
+  if(s != NULL)
+    flow->risk_str = ndpi_strdup(s);  
+  
   flow->confidence = flow->ndpi_flow->confidence;
 
-  snprintf(flow->host_server_name, sizeof(flow->host_server_name), "%s",
+  ndpi_snprintf(flow->host_server_name, sizeof(flow->host_server_name), "%s",
 	   flow->ndpi_flow->host_server_name);
 
-  snprintf(flow->flow_extra_info, sizeof(flow->flow_extra_info), "%s",
+  ndpi_snprintf(flow->flow_extra_info, sizeof(flow->flow_extra_info), "%s",
 	   flow->ndpi_flow->flow_extra_info);
 
   flow->risk = flow->ndpi_flow->risk;
@@ -1068,8 +1082,11 @@ void process_ndpi_collected_info(struct ndpi_workflow * workflow, struct ndpi_fl
   /* DNS */
   else if(is_ndpi_proto(flow, NDPI_PROTOCOL_DNS)) {
     if(flow->ndpi_flow->protos.dns.rsp_type == 0x1)
+    {
+      flow->info_type = INFO_GENERIC;
       inet_ntop(AF_INET, &flow->ndpi_flow->protos.dns.rsp_addr.ipv4, flow->info, sizeof(flow->info));
-    else {
+    } else {
+      flow->info_type = INFO_GENERIC;
       inet_ntop(AF_INET6, &flow->ndpi_flow->protos.dns.rsp_addr.ipv6, flow->info, sizeof(flow->info));
 
       /* For consistency across platforms replace :0: with :: */
@@ -1078,89 +1095,101 @@ void process_ndpi_collected_info(struct ndpi_workflow * workflow, struct ndpi_fl
   }
   /* MDNS */
   else if(is_ndpi_proto(flow, NDPI_PROTOCOL_MDNS)) {
-    snprintf(flow->info, sizeof(flow->info), "%s", flow->ndpi_flow->host_server_name);
+    flow->info_type = INFO_GENERIC;
+    ndpi_snprintf(flow->info, sizeof(flow->info), "%s", flow->ndpi_flow->host_server_name);
   }
   /* UBNTAC2 */
   else if(is_ndpi_proto(flow, NDPI_PROTOCOL_UBNTAC2)) {
-    snprintf(flow->info, sizeof(flow->info), "%s", flow->ndpi_flow->protos.ubntac2.version);
+    flow->info_type = INFO_GENERIC;
+    ndpi_snprintf(flow->info, sizeof(flow->info), "%s", flow->ndpi_flow->protos.ubntac2.version);
   }
   /* FTP */
   else if((is_ndpi_proto(flow, NDPI_PROTOCOL_FTP_CONTROL))
 	  || /* IMAP */ is_ndpi_proto(flow, NDPI_PROTOCOL_MAIL_IMAP)
 	  || /* POP */  is_ndpi_proto(flow, NDPI_PROTOCOL_MAIL_POP)
 	  || /* SMTP */ is_ndpi_proto(flow, NDPI_PROTOCOL_MAIL_SMTP)) {
-    if(flow->ndpi_flow->l4.tcp.ftp_imap_pop_smtp.username[0] != '\0')
-      snprintf(flow->info, sizeof(flow->info), "User: %s][Pwd: %s%s",
-	       flow->ndpi_flow->l4.tcp.ftp_imap_pop_smtp.username,
-	       flow->ndpi_flow->l4.tcp.ftp_imap_pop_smtp.password,
-	       flow->ndpi_flow->l4.tcp.ftp_imap_pop_smtp.auth_failed ? "][Auth Failed" : "");
+    flow->info_type = INFO_FTP_IMAP_POP_SMTP;
+    ndpi_snprintf(flow->ftp_imap_pop_smtp.username,
+                  sizeof(flow->ftp_imap_pop_smtp.username),
+                  "%s", flow->ndpi_flow->l4.tcp.ftp_imap_pop_smtp.username);
+    ndpi_snprintf(flow->ftp_imap_pop_smtp.password,
+                  sizeof(flow->ftp_imap_pop_smtp.password),
+                  "%s", flow->ndpi_flow->l4.tcp.ftp_imap_pop_smtp.password);
+    flow->ftp_imap_pop_smtp.auth_failed =
+      flow->ndpi_flow->l4.tcp.ftp_imap_pop_smtp.auth_failed;
+  }
+  /* TFTP */
+  else if(is_ndpi_proto(flow, NDPI_PROTOCOL_TFTP)) {
+    flow->info_type = INFO_GENERIC;
+    if(flow->ndpi_flow->protos.tftp.filename[0] != '\0')
+      ndpi_snprintf(flow->info, sizeof(flow->info), "Filename: %s",
+                    flow->ndpi_flow->protos.tftp.filename);
   }
   /* KERBEROS */
   else if(is_ndpi_proto(flow, NDPI_PROTOCOL_KERBEROS)) {
-    if((flow->ndpi_flow->protos.kerberos.hostname[0] != '\0')
-       || (flow->ndpi_flow->protos.kerberos.username[0] != '\0')) {
-      snprintf(flow->info, sizeof(flow->info), "%s%s%s%s",
-	       flow->ndpi_flow->protos.kerberos.domain /* = realm */,
-	       flow->ndpi_flow->protos.kerberos.domain[0] != '\0' ? "\\" : "",
-	       flow->ndpi_flow->protos.kerberos.hostname,
-	       flow->ndpi_flow->protos.kerberos.username);
-    } else if(flow->ndpi_flow->protos.kerberos.domain[0] != '\0')
-      snprintf(flow->info, sizeof(flow->info), "%s",
-	       flow->ndpi_flow->protos.kerberos.domain);
-
-#if 0
-    if(flow->info[0] != '\0')
-      printf("->> (%d) [%s][%s][%s]<<--\n",
-	     htons(flow->src_port),
-	     flow->ndpi_flow->protos.kerberos.domain,
-	     flow->ndpi_flow->protos.kerberos.hostname,
-	     flow->ndpi_flow->protos.kerberos.username);
-#endif
+    flow->info_type = INFO_KERBEROS;
+    ndpi_snprintf(flow->kerberos.domain,
+                  sizeof(flow->kerberos.domain),
+                  "%s", flow->ndpi_flow->protos.kerberos.domain);
+    ndpi_snprintf(flow->kerberos.hostname,
+                  sizeof(flow->kerberos.hostname),
+                  "%s", flow->ndpi_flow->protos.kerberos.hostname);
+    ndpi_snprintf(flow->kerberos.username,
+                  sizeof(flow->kerberos.username),
+                  "%s", flow->ndpi_flow->protos.kerberos.username);
   }
   /* HTTP */
   else if((flow->detected_protocol.master_protocol == NDPI_PROTOCOL_HTTP)
 	  || is_ndpi_proto(flow, NDPI_PROTOCOL_HTTP)) {
     if(flow->ndpi_flow->http.url != NULL) {
-      snprintf(flow->http.url, sizeof(flow->http.url), "%s", flow->ndpi_flow->http.url);
+      ndpi_snprintf(flow->http.url, sizeof(flow->http.url), "%s", flow->ndpi_flow->http.url);
       flow->http.response_status_code = flow->ndpi_flow->http.response_status_code;
-      snprintf(flow->http.content_type, sizeof(flow->http.content_type), "%s", flow->ndpi_flow->http.content_type ? flow->ndpi_flow->http.content_type : "");
-      snprintf(flow->http.request_content_type, sizeof(flow->http.request_content_type), "%s", flow->ndpi_flow->http.request_content_type ? flow->ndpi_flow->http.request_content_type : "");
-      snprintf(flow->http.user_agent, sizeof(flow->http.user_agent), "%s", flow->ndpi_flow->http.user_agent ? flow->ndpi_flow->http.user_agent : "");
+      ndpi_snprintf(flow->http.content_type, sizeof(flow->http.content_type), "%s", flow->ndpi_flow->http.content_type ? flow->ndpi_flow->http.content_type : "");
+      ndpi_snprintf(flow->http.request_content_type, sizeof(flow->http.request_content_type), "%s", flow->ndpi_flow->http.request_content_type ? flow->ndpi_flow->http.request_content_type : "");
     }
-  } else if(is_ndpi_proto(flow, NDPI_PROTOCOL_TELNET)) {
+  }
+  /* COLLECTD */
+  else if(is_ndpi_proto(flow, NDPI_PROTOCOL_COLLECTD)) {
+    flow->info_type = INFO_GENERIC;
+    if(flow->ndpi_flow->protos.collectd.client_username[0] != '\0')
+      ndpi_snprintf(flow->info, sizeof(flow->info), "Username: %s",
+                    flow->ndpi_flow->protos.collectd.client_username);
+  }
+  /* TELNET */
+  else if(is_ndpi_proto(flow, NDPI_PROTOCOL_TELNET)) {
     if(flow->ndpi_flow->protos.telnet.username[0] != '\0')
       flow->telnet.username = ndpi_strdup(flow->ndpi_flow->protos.telnet.username);
     if(flow->ndpi_flow->protos.telnet.password[0] != '\0')
       flow->telnet.password = ndpi_strdup(flow->ndpi_flow->protos.telnet.password);
   } else if(is_ndpi_proto(flow, NDPI_PROTOCOL_SSH)) {
-    snprintf(flow->host_server_name,
+    ndpi_snprintf(flow->host_server_name,
 	     sizeof(flow->host_server_name), "%s",
 	     flow->ndpi_flow->protos.ssh.client_signature);
-    snprintf(flow->ssh_tls.server_info, sizeof(flow->ssh_tls.server_info), "%s",
+    ndpi_snprintf(flow->ssh_tls.server_info, sizeof(flow->ssh_tls.server_info), "%s",
 	     flow->ndpi_flow->protos.ssh.server_signature);
-    snprintf(flow->ssh_tls.client_hassh, sizeof(flow->ssh_tls.client_hassh), "%s",
+    ndpi_snprintf(flow->ssh_tls.client_hassh, sizeof(flow->ssh_tls.client_hassh), "%s",
 	     flow->ndpi_flow->protos.ssh.hassh_client);
-    snprintf(flow->ssh_tls.server_hassh, sizeof(flow->ssh_tls.server_hassh), "%s",
+    ndpi_snprintf(flow->ssh_tls.server_hassh, sizeof(flow->ssh_tls.server_hassh), "%s",
 	     flow->ndpi_flow->protos.ssh.hassh_server);
   }
   /* TLS */
-  else if((is_ndpi_proto(flow, NDPI_PROTOCOL_TLS))
+  else if(is_ndpi_proto(flow, NDPI_PROTOCOL_TLS)
+          || is_ndpi_proto(flow, NDPI_PROTOCOL_DTLS)
+          || is_ndpi_proto(flow, NDPI_PROTOCOL_MAIL_SMTPS)
+          || is_ndpi_proto(flow, NDPI_PROTOCOL_MAIL_IMAPS)
+          || is_ndpi_proto(flow, NDPI_PROTOCOL_MAIL_POPS)
 	  || ((is_quic = is_ndpi_proto(flow, NDPI_PROTOCOL_QUIC)))
-	  || (flow->detected_protocol.master_protocol == NDPI_PROTOCOL_TLS)
-	  || (flow->ndpi_flow->protos.tls_quic.ja3_client[0] != '\0')
 	  ) {
     flow->ssh_tls.ssl_version = flow->ndpi_flow->protos.tls_quic.ssl_version;
-
-    snprintf(flow->http.user_agent, sizeof(flow->http.user_agent), "%s", flow->ndpi_flow->http.user_agent ? flow->ndpi_flow->http.user_agent : "");
 
     if(flow->ndpi_flow->protos.tls_quic.server_names_len > 0 && flow->ndpi_flow->protos.tls_quic.server_names)
       flow->ssh_tls.server_names = ndpi_strdup(flow->ndpi_flow->protos.tls_quic.server_names);
 
     flow->ssh_tls.notBefore = flow->ndpi_flow->protos.tls_quic.notBefore;
     flow->ssh_tls.notAfter = flow->ndpi_flow->protos.tls_quic.notAfter;
-    snprintf(flow->ssh_tls.ja3_client, sizeof(flow->ssh_tls.ja3_client), "%s",
+    ndpi_snprintf(flow->ssh_tls.ja3_client, sizeof(flow->ssh_tls.ja3_client), "%s",
 	     flow->ndpi_flow->protos.tls_quic.ja3_client);
-    snprintf(flow->ssh_tls.ja3_server, sizeof(flow->ssh_tls.ja3_server), "%s",
+    ndpi_snprintf(flow->ssh_tls.ja3_server, sizeof(flow->ssh_tls.ja3_server), "%s",
 	     flow->ndpi_flow->protos.tls_quic.ja3_server);
     flow->ssh_tls.server_unsafe_cipher = flow->ndpi_flow->protos.tls_quic.server_unsafe_cipher;
     flow->ssh_tls.server_cipher = flow->ndpi_flow->protos.tls_quic.server_cipher;
@@ -1199,22 +1228,18 @@ void process_ndpi_collected_info(struct ndpi_workflow * workflow, struct ndpi_fl
       correct_csv_data_field(flow->ndpi_flow->protos.tls_quic.alpn);
       correct_csv_data_field(flow->ndpi_flow->protos.tls_quic.tls_supported_versions);
 
-      if(csv_fp)
-	snprintf(flow->info, sizeof(flow->info), "%s",
-		 flow->ndpi_flow->protos.tls_quic.alpn);
-      else
-	snprintf(flow->info, sizeof(flow->info), "ALPN: %s][TLS Supported Versions: %s",
-		 flow->ndpi_flow->protos.tls_quic.alpn,
-		 flow->ndpi_flow->protos.tls_quic.tls_supported_versions);
+      flow->info_type = INFO_TLS_QUIC_ALPN_VERSION;
+      ndpi_snprintf(flow->tls_quic.alpn, sizeof(flow->tls_quic.alpn), "%s",
+                    flow->ndpi_flow->protos.tls_quic.alpn);
+      ndpi_snprintf(flow->tls_quic.tls_supported_versions,
+                    sizeof(flow->tls_quic.tls_supported_versions),
+                    "%s", flow->ndpi_flow->protos.tls_quic.tls_supported_versions);
     } else if(flow->ndpi_flow->protos.tls_quic.alpn) {
       correct_csv_data_field(flow->ndpi_flow->protos.tls_quic.alpn);
 
-      if(csv_fp)
-	snprintf(flow->info, sizeof(flow->info), "%s,",
-		 flow->ndpi_flow->protos.tls_quic.alpn);
-      else
-	snprintf(flow->info, sizeof(flow->info), "ALPN: %s",
-		 flow->ndpi_flow->protos.tls_quic.alpn);
+      flow->info_type = INFO_TLS_QUIC_ALPN_ONLY;
+      ndpi_snprintf(flow->tls_quic.alpn, sizeof(flow->tls_quic.alpn), "%s",
+                    flow->ndpi_flow->protos.tls_quic.alpn);
     }
 
     if(enable_doh_dot_detection) {
@@ -1229,6 +1254,10 @@ void process_ndpi_collected_info(struct ndpi_workflow * workflow, struct ndpi_fl
       }
     }
   }
+
+  ndpi_snprintf(flow->http.user_agent,
+                sizeof(flow->http.user_agent),
+                "%s", (flow->ndpi_flow->http.user_agent ? flow->ndpi_flow->http.user_agent : ""));
 
   if(flow->detection_completed && (!flow->check_extra_packets)) {
     if(is_ndpi_proto(flow, NDPI_PROTOCOL_UNKNOWN)) {
@@ -1313,8 +1342,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
 					   const struct pcap_pkthdr *header,
 					   const u_char *packet,
 					   pkt_timeval when,
-					   ndpi_risk *flow_risk,
-					   FILE * csv_fp) {
+					   ndpi_risk *flow_risk) {
   struct ndpi_flow_info *flow = NULL;
   struct ndpi_flow_struct *ndpi_flow = NULL;
   u_int8_t proto;
@@ -1413,6 +1441,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
       }
       ndpi_data_add_value(flow->pktlen_s_to_c, rawsize);
       flow->dst2src_packets++, flow->dst2src_bytes += rawsize, flow->dst2src_goodput_bytes += payload_len;
+      flow->risk &= ~(1ULL << NDPI_UNIDIRECTIONAL_TRAFFIC); /* Clear bit */
       memcpy(&flow->dst2src_last_pkt_time, &when, sizeof(when));
 
 #ifdef DIRECTION_BINS
@@ -1554,11 +1583,11 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
 	  if(enable_protocol_guess) workflow->stats.guessed_flow_protocols++;
 	}
 
-	process_ndpi_collected_info(workflow, flow, csv_fp);
+	process_ndpi_collected_info(workflow, flow);
       }
     }
   }
-
+  
 #if 0
   if(flow->risk != 0) {
     FILE *r = fopen("/tmp/e", "a");
@@ -1594,6 +1623,7 @@ int ndpi_is_datalink_supported(int datalink_type) {
   case DLT_LINUX_SLL:
   case DLT_IEEE802_11_RADIO:
   case DLT_RAW:
+  case DLT_PPI:
     return 1;
   default:
     return 0;
@@ -1605,8 +1635,7 @@ int ndpi_is_datalink_supported(int datalink_type) {
 struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
 					       const struct pcap_pkthdr *header,
 					       const u_char *packet,
-					       ndpi_risk *flow_risk,
-					       FILE * csv_fp) {
+					       ndpi_risk *flow_risk) {
   /*
    * Declare pointers to packet headers
    */
@@ -1638,8 +1667,8 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
   ndpi_packet_tunnel tunnel_type = ndpi_no_tunnel;
 
   /* lengths and offsets */
-  u_int32_t eth_offset = 0;
-  u_int16_t radio_len;
+  u_int32_t eth_offset = 0, dlt;
+  u_int16_t radio_len, header_length;
   u_int16_t fc;
   u_int16_t type = 0;
   int wifi_len = 0;
@@ -1718,14 +1747,14 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
 #ifdef DLT_IPV4
   case DLT_IPV4:
     type = ETH_P_IP;
-    ip_offset = 0;
+    ip_offset = eth_offset;
     break;
 #endif
 
 #ifdef DLT_IPV6
   case DLT_IPV6:
     type = ETH_P_IPV6;
-    ip_offset = 0;
+    ip_offset = eth_offset;
     break;
 #endif
 
@@ -1784,7 +1813,7 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
 	 (FCF_TO_DS(fc) == 0x0 && FCF_FROM_DS(fc)))
 	wifi_len = 26; /* + 4 byte fcs */
     } else   /* no data frames */
-      break;
+      return(nproto);
 
     /* Check ether_type from LLC */
     if(header->caplen < (eth_offset + wifi_len + radio_len + sizeof(struct ndpi_llc_header_snap)))
@@ -1798,8 +1827,17 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
     break;
 
   case DLT_RAW:
-    ip_offset = eth_offset = 0;
+    ip_offset = eth_offset;
     break;
+
+  case DLT_PPI:
+    header_length = le16toh(*(u_int16_t *)&packet[eth_offset + 2]);
+    dlt = le32toh(*(u_int32_t *)&packet[eth_offset + 4]);
+    if(dlt != DLT_EN10MB) /* Handle only standard ethernet, for the time being */
+      return(nproto);
+    datalink_type = DLT_EN10MB;
+    eth_offset += header_length;
+    goto datalink_check;
 
   default:
     /*
@@ -1834,6 +1872,8 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
 
   case ETH_P_MPLS_UNI:
   case ETH_P_MPLS_MULTI:
+    if(ip_offset+4 >= (int)header->caplen)
+      return(nproto);
     mpls.u32 = *((uint32_t *) &packet[ip_offset]);
     mpls.u32 = ntohl(mpls.u32);
     workflow->stats.mpls_count++;
@@ -1892,9 +1932,7 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
     iph6 = NULL;
 
     if(iph->protocol == IPPROTO_IPV6
-#ifdef IPPROTO_IPIP
-       || iph->protocol == IPPROTO_IPIP
-#endif
+       || iph->protocol == NDPI_IPIP_PROTOCOL_TYPE
        ) {
       ip_offset += ip_len;
       if(ip_len > 0)
@@ -1933,9 +1971,7 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
     }
 
     if(proto == IPPROTO_IPV6
-#ifdef IPPROTO_IPIP
-       || proto == IPPROTO_IPIP
-#endif
+       || proto == NDPI_IPIP_PROTOCOL_TYPE
        ) {
       if(l4ptr > packet) { /* Better safe than sorry */
         ip_offset = (l4ptr - packet);
@@ -2044,6 +2080,8 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
 	      tag_len = 1, stop = 1;
 	      break;
 	    default:
+	      if(offset + 1 >= header->caplen)
+	        return(nproto); /* Invalid packet */
 	      tag_len = packet[offset+1];
 	      break;
 	    }
@@ -2091,7 +2129,7 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
   return(packet_processing(workflow, time_ms, vlan_id, tunnel_type, iph, iph6,
 			   ip_offset, header->caplen - ip_offset,
 			   header->caplen, header, packet, header->ts,
-			   flow_risk, csv_fp));
+			   flow_risk));
 }
 
 /* ********************************************************** */
