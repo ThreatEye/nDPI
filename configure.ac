@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-AC_INIT([libndpi], [4.2.0])
-=======
 AC_INIT([libndpi],[4.4.0])
->>>>>>> 4.4
 
 AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_MACRO_DIR([m4])
