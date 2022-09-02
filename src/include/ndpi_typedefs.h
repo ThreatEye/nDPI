@@ -1351,8 +1351,19 @@ struct ndpi_flow_struct {
     } bittorrent;
 
     struct {
-      char fingerprint[48];
-      char class_ident[48];
+      u_int32_t xid;
+      u_int32_t	yiaddr;
+      u_int32_t	siaddr;
+      u_int8_t	chaddr[6];
+      /* DHCP Options */
+      char domain_name[256]; /* option 15 limited to 255 chars see RFC 1035 */
+      u_int32_t requested_ip; /* option 50 */
+      u_int32_t lease_time; /* option 51 */
+      u_int8_t msg_type; /* option 53 */
+      ndpi_ip_addr_t server_ident; /* option 54 */
+      char fingerprint[48]; /* option 55 */
+      u_int32_t renew_time; /* option 58 */
+      char class_ident[48]; /* option 60 */
     } dhcp;
 
     struct {
