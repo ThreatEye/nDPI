@@ -1360,6 +1360,7 @@ struct ndpi_flow_struct {
       u_int32_t requested_ip; /* option 50 */
       u_int32_t lease_time; /* option 51 */
       u_int8_t msg_type; /* option 53 */
+      u_int8_t valid; /* signifies valid dhcp resp */
       ndpi_ip_addr_t server_ident; /* option 54 */
       char fingerprint[48]; /* option 55 */
       u_int32_t renew_time; /* option 58 */
