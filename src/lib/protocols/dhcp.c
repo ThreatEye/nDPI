@@ -194,12 +194,20 @@ void ndpi_search_dhcp_udp(struct ndpi_detection_module_struct *ndpi_struct,
             strncpy((char*)flow->protos.dhcp.domain_name, name, j);
             flow->protos.dhcp.domain_name[j] = '\0';
           } else if(id == 50) /* Requested IP */ {
+            if (len > sizeof(flow->protos.dhcp.requested_ip))
+              len = sizeof(flow->protos.dhcp.requested_ip);
             memcpy(&flow->protos.dhcp.requested_ip, (char*)&dhcp->options[i+2], len); 
           } else if(id == 51) /* Lease Time */ {
+            if (len > sizeof(flow->protos.dhcp.lease_time))
+              len = sizeof(flow->protos.dhcp.lease_time);
             memcpy(&flow->protos.dhcp.lease_time, (char*)&dhcp->options[i+2], len);  
           } else if(id == 54) /* Server Identifier */ {
+            if (len > sizeof(flow->protos.dhcp.server_ident))
+              len = sizeof(flow->protos.dhcp.server_ident);
             memcpy(&flow->protos.dhcp.server_ident, (char*)&dhcp->options[i+2], len);
           } else if(id == 58) /* Renewal Time */ {
+            if (len > sizeof(flow->protos.dhcp.renew_time))
+              len = sizeof(flow->protos.dhcp.renew_time);
             memcpy(&flow->protos.dhcp.renew_time, (char*)&dhcp->options[i+2], len); 
           }
           
