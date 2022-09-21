@@ -101,6 +101,7 @@ void ndpi_search_dhcp_udp(struct ndpi_detection_module_struct *ndpi_struct, stru
 
             if(msg_type <= 8) {
               foundValidMsgType = 1;
+              flow->protos.dhcp.valid = 1;
               break;
             }
           }
@@ -119,6 +120,13 @@ void ndpi_search_dhcp_udp(struct ndpi_detection_module_struct *ndpi_struct, stru
       /* Ok, we have a valid DHCP packet -> we can write to flow->protos.dhcp */
       NDPI_LOG_INFO(ndpi_struct, "found DHCP\n");
       ndpi_int_dhcp_add_connection(ndpi_struct, flow);
+
+      /* Assign basic  dhcp information to flow structure */
+      flow->protos.dhcp.msg_type = msg_type; /* option 53 msg_type */
+      flow->protos.dhcp.xid = dhcp->xid; 
+      flow->protos.dhcp.siaddr = dhcp->siaddr;
+      flow->protos.dhcp.yiaddr = dhcp->yiaddr; 
+      memcpy(flow->protos.dhcp.chaddr, dhcp->chaddr, sizeof(dhcp->chaddr));
 
       /* Second iteration: parse the interesting options */
       while(i + 1 /* for the len */ < dhcp_options_size) {
@@ -166,8 +174,30 @@ void ndpi_search_dhcp_udp(struct ndpi_detection_module_struct *ndpi_struct, stru
 	      //	    while(j < len) { printf( "%c", name[j]); j++; }; printf("\n");
 #endif
             ndpi_hostname_sni_set(flow, name, len);
-	  }
+          } else if(id == 15 /* Domain Name */) {
+            char *name = (char*)&dhcp->options[i+2];
+            int j = 0;
 
+            j = ndpi_min(len, sizeof(flow->protos.dhcp.domain_name)-1);
+            strncpy((char*)flow->protos.dhcp.domain_name, name, j);
+            flow->protos.dhcp.domain_name[j] = '\0';
+          } else if(id == 50) /* Requested IP */ {
+            if (len > sizeof(flow->protos.dhcp.requested_ip))
+              len = sizeof(flow->protos.dhcp.requested_ip);
+            memcpy(&flow->protos.dhcp.requested_ip, (char*)&dhcp->options[i+2], len); 
+          } else if(id == 51) /* Lease Time */ {
+            if (len > sizeof(flow->protos.dhcp.lease_time))
+              len = sizeof(flow->protos.dhcp.lease_time);
+            memcpy(&flow->protos.dhcp.lease_time, (char*)&dhcp->options[i+2], len);  
+          } else if(id == 54) /* Server Identifier */ {
+            if (len > sizeof(flow->protos.dhcp.server_ident))
+              len = sizeof(flow->protos.dhcp.server_ident);
+            memcpy(&flow->protos.dhcp.server_ident, (char*)&dhcp->options[i+2], len);
+          } else if(id == 58) /* Renewal Time */ {
+            if (len > sizeof(flow->protos.dhcp.renew_time))
+              len = sizeof(flow->protos.dhcp.renew_time);
+            memcpy(&flow->protos.dhcp.renew_time, (char*)&dhcp->options[i+2], len); 
+          }
           i += len + 2;
         }
       }
