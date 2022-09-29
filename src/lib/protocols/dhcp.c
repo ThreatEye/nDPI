@@ -101,7 +101,7 @@ void ndpi_search_dhcp_udp(struct ndpi_detection_module_struct *ndpi_struct, stru
 
             if(msg_type <= 8) {
               foundValidMsgType = 1;
-              flow->protos.dhcp.valid = 1;
+              flow->protos.dhcp.valid |= 0x01;
               break;
             }
           }
