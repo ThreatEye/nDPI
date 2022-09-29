@@ -194,29 +194,16 @@ void ndpi_search_dhcp_udp(struct ndpi_detection_module_struct *ndpi_struct,
             strncpy((char*)flow->protos.dhcp.domain_name, name, j);
             flow->protos.dhcp.domain_name[j] = '\0';
           } else if(id == 50) /* Requested IP */ {
-            if (len > sizeof(flow->protos.dhcp.requested_ip))
-              memcpy(&flow->protos.dhcp.requested_ip, (char*)&dhcp->options[i+2], sizeof(flow->protos.dhcp.requested_ip)); 
-            else
-              memcpy(&flow->protos.dhcp.requested_ip, (char*)&dhcp->options[i+2], len); 
+              flow->protos.dhcp.valid |= 0x02 ;
+              memcpy(&flow->protos.dhcp.requested_ip, (char*)&dhcp->options[i+2], ndpi_min(sizeof(flow->protos.dhcp.requested_ip), len)); 
           } else if(id == 51) /* Lease Time */ {
-            if (len > sizeof(flow->protos.dhcp.lease_time))
-              memcpy(&flow->protos.dhcp.lease_time, (char*)&dhcp->options[i+2], sizeof(flow->protos.dhcp.lease_time)); 
-            else
-              memcpy(&flow->protos.dhcp.lease_time, (char*)&dhcp->options[i+2], len); 
+              memcpy(&flow->protos.dhcp.lease_time, (char*)&dhcp->options[i+2], ndpi_min(sizeof(flow->protos.dhcp.lease_time),len)); 
           } else if(id == 54) /* Server Identifier */ {
-            if (len > sizeof(flow->protos.dhcp.server_ident))
-              memcpy(&flow->protos.dhcp.server_ident, (char*)&dhcp->options[i+2], sizeof(flow->protos.dhcp.server_ident)); 
-            else
-              memcpy(&flow->protos.dhcp.server_ident, (char*)&dhcp->options[i+2], len); 
+              flow->protos.dhcp.valid |= 0x04;
+              memcpy(&flow->protos.dhcp.server_ident, (char*)&dhcp->options[i+2], ndpi_min(sizeof(flow->protos.dhcp.server_ident), len)); 
           } else if(id == 58) /* Renewal Time */ {
-            if (len > sizeof(flow->protos.dhcp.renew_time))
-              memcpy(&flow->protos.dhcp.renew_time, (char*)&dhcp->options[i+2], sizeof(flow->protos.dhcp.renew_time)); 
-            else
-              memcpy(&flow->protos.dhcp.renew_time, (char*)&dhcp->options[i+2], len); 
+              memcpy(&flow->protos.dhcp.renew_time, (char*)&dhcp->options[i+2], ndpi_min(sizeof(flow->protos.dhcp.renew_time), len)); 
           }
-          
-
-
           i += len + 2;
         }
       }
