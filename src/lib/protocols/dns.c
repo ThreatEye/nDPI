@@ -310,7 +310,7 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
 		  )) {
 		memcpy(&flow->protos.dns.rsp_addr, packet->payload + x, data_len);
 	      }
-          else if (rsp_type == 0x0c || rsp_type == 0x05) // revers
+          else if (rsp_type == 0x0c || rsp_type == 0x05) // reverse dns lookup and cname record processing
           {
 
             // reverse dns lookup responses can have an address label as well as additional domain name labels 
