@@ -304,12 +304,6 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
 
 	    if((x + data_len) <= packet->payload_packet_len) {
 	      // printf("[rsp_type: %u][data_len: %u]\n", rsp_type, data_len);
-        /*
-	      if(rsp_type == 0x05 // CNAME ) {
-		x += data_len;
-		continue; // Skip CNAME 
-	      }
-        */
 
 	      if((((rsp_type == 0x1) && (data_len == 4)) /* A */
 		  || ((rsp_type == 0x1c) && (data_len == 16)) /* AAAA */
