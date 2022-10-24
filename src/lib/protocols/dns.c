@@ -304,18 +304,19 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
 
 	    if((x + data_len) <= packet->payload_packet_len) {
 	      // printf("[rsp_type: %u][data_len: %u]\n", rsp_type, data_len);
-
-	      if(rsp_type == 0x05 /* CNAME */) {
+        /*
+	      if(rsp_type == 0x05 // CNAME ) {
 		x += data_len;
-		continue; /* Skip CNAME */
+		continue; // Skip CNAME 
 	      }
+        */
 
 	      if((((rsp_type == 0x1) && (data_len == 4)) /* A */
 		  || ((rsp_type == 0x1c) && (data_len == 16)) /* AAAA */
 		  )) {
 		memcpy(&flow->protos.dns.rsp_addr, packet->payload + x, data_len);
 	      }
-          else if (rsp_type == 0x0c)
+          else if (rsp_type == 0x0c || rsp_type == 0x05) // revers
           {
 
             // reverse dns lookup responses can have an address label as well as additional domain name labels 
@@ -330,7 +331,7 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
               // if first char is number this is an address 
               // number can't be first char in domain name
               // we only want to check the first label for an ip address 
-              if (packet->payload[x+1] >= 0x30 && packet->payload[x+1] <= 0x39 && an_index == 0)
+              if (packet->payload[x+1] >= 0x30 && packet->payload[x+1] <= 0x39 && an_index == 0 && rsp_type == 0x0c) // only perform this check on PTR records
               {
                 x += label_len + 1; // skip  label len + address field 
               }
