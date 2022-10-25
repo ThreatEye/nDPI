@@ -310,41 +310,41 @@ static int search_valid_dns(struct ndpi_detection_module_struct *ndpi_struct,
 		  )) {
 		memcpy(&flow->protos.dns.rsp_addr, packet->payload + x, data_len);
 	      }
-          else if (rsp_type == 0x0c || rsp_type == 0x05) // reverse dns lookup and cname record processing
-          {
+		    else if (rsp_type == 0x0c || rsp_type == 0x05) // reverse dns lookup and cname record processing
+		    {
 
-            // reverse dns lookup responses can have an address label as well as additional domain name labels 
-            // since we already have the address from the query we just need the domain name
-            // we only process the first answer and grab its domain name
-            int an_index = 0;
-            // make sure to exit loop if x is a 00 octet or x exceeds the packet payload length or the length octet has first 2 bits set (domain name compressed)
-            while((packet->payload[x] != '\0') && (x < packet->payload_packet_len) && (packet->payload[x] < 0x40)) // normal length octets can't be greater than 63 chars total 64 chars 1 for the length octet itself leaves 63
-            {
-              int label_len = packet->payload[x]; // get 1st label len
+		      // reverse dns lookup responses can have an address label as well as additional domain name labels 
+		      // since we already have the address from the query we just need the domain name
+		      // we only process the first answer and grab its domain name
+		      int an_index = 0;
+		      // make sure to exit loop if x is a 00 octet or x exceeds the packet payload length or the length octet has first 2 bits set (domain name compressed)
+		      while((packet->payload[x] != '\0') && (x < packet->payload_packet_len) && (packet->payload[x] < 0x40)) // normal length octets can't be greater than 63 chars total 64 chars 1 for the length octet itself leaves 63
+		      {
+		        int label_len = packet->payload[x]; // get 1st label len
 
-              // if first char is number this is an address 
-              // number can't be first char in domain name
-              // we only want to check the first label for an ip address 
-              if (packet->payload[x+1] >= 0x30 && packet->payload[x+1] <= 0x39 && an_index == 0 && rsp_type == 0x0c) // only perform this check on PTR records
-              {
-                x += label_len + 1; // skip  label len + address field 
-              }
-              else
-              {
-                if (an_index + label_len < (int)(sizeof(flow->protos.dns.answer_domain)-1))
-                {
-                  strncat(flow->protos.dns.answer_domain, (char *)packet->payload + x + 1, label_len); // copy label section into string field
-                  an_index += label_len; // increment index
-                  flow->protos.dns.answer_domain[an_index] = '.'; // delimeter between label sections
-                  an_index++; // increment index for delimeter
-                  x += label_len + 1; // skip  label len + address field 
-                }
-                else
-                  break;
-              }
-            }
-            flow->protos.dns.answer_domain[an_index - 1] = '\0'; // remove trailing '.' char and replace with null term
-          }
+		        // if first char is number this is an address 
+		        // number can't be first char in domain name
+		        // we only want to check the first label for an ip address 
+		        if (packet->payload[x+1] >= 0x30 && packet->payload[x+1] <= 0x39 && an_index == 0 && rsp_type == 0x0c) // only perform this check on PTR records
+		        {
+		          x += label_len + 1; // skip  label len + address field 
+		        }
+		        else
+		        {
+		          if (an_index + label_len < (int)(sizeof(flow->protos.dns.answer_domain)-1))
+		          {
+		            strncat(flow->protos.dns.answer_domain, (char *)packet->payload + x + 1, label_len); // copy label section into string field
+		            an_index += label_len; // increment index
+		            flow->protos.dns.answer_domain[an_index] = '.'; // delimeter between label sections
+		            an_index++; // increment index for delimeter
+		            x += label_len + 1; // skip  label len + address field 
+		          }
+		          else
+		            break;
+		        }
+		      }
+		      flow->protos.dns.answer_domain[an_index - 1] = '\0'; // remove trailing '.' char and replace with null term
+		    }
 	    }
 	  }
 
